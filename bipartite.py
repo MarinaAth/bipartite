@@ -98,8 +98,16 @@ class BipatiteAnalysis:
 
         # Extract expression values of gene and ensure there are expression values 
         # for both presence and absence (for FC and pval)
-        presence_expr = [gene_data[strain] for strain in presence_strains if strain in gene_data]
-        absence_expr = [gene_data[strain] for strain in absence_strains if strain in gene_data]
+        presence_expr = []
+        absence_expr = []
+
+        for strain in presence_strains:
+            if strain in gene_data:
+                presence_expr.append(gene_data[strain])
+
+        for strain in absence_strains:
+            if strain in gene_data:
+                absence_expr.append(gene_data[strain])
 
         if not presence_expr or not absence_expr:
             return None
@@ -108,9 +116,12 @@ class BipatiteAnalysis:
         all_expr_values = list(gene_data.values())
         median_gene = np.median(all_expr_values)
 
+        if median_gene == 0:
+            logger.warning(f"{gene} has a median expression = 0")
+        
         # FC calculation
-        fc_present = [expr / median_gene for element in presence_expr]
-        fc_absent = [expr / median_gene for element in absence_expr]
+        fc_present = [expression_value / median_gene for expression_value in presence_expr]
+        fc_absent = [expression_value / median_gene for expression_value in absence_expr]
 
         fc_present_median = np.median(fc_present)
         fc_absent_median = np.median(fc_absent)
