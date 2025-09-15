@@ -5,7 +5,7 @@ import save_mods_to_dict
 import numpy as np
 
 
-modDir = ('/Users/mathanasouli/Documents/final_network_Sept2024/topMods')
+modDir = ('final_network/topMods')
 modules_all = save_mods_to_dict.assign_to_dict(modDir)
 process_mods = {f'mod{i}' for i in range(50, 61)}
 modules = {k: modules_all[k] for k in process_mods}
