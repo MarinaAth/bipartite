@@ -68,10 +68,10 @@ class BipatiteAnalysis:
         """Separate strains based on the presence/absence patterns in the pathway data
 
         Args:
-            pathway_data (Dict): 
+            pathway_data (Dict): The binary data of bacterial MPGs
 
         Returns:
-            Tuple[List[str], List[str]]: _description_
+            Tuple[List[str], List[str]]: A list of bacterial strains/diets with and without the MPG
         """
         presence = [strain for strain, value in pathway_data.items() if value == 1]
         absence = [strain for strain, value in pathway_data.items() if value == 0]
@@ -84,12 +84,12 @@ class BipatiteAnalysis:
         for strains with present vs. absent pathways
 
         Args:
-            gene (str): _description_
-            presence_strains (List[str]): _description_
-            absence_strains (List[str]): _description_
+            gene (str): A gene from the co-expression module
+            presence_strains (List[str]): Strains/diets with MPG
+            absence_strains (List[str]): Strains/diets without MPG
 
         Returns:
-            Optional[float]: _description_
+            Optional[float]
         """
         if gene not in self.gene_expression_dict:
             return None
@@ -142,12 +142,12 @@ class BipatiteAnalysis:
         """Interaction between a gene co-expression module and a bacterial pathway group
 
         Args:
-            module_genes (List[str]): _description_
-            presence_strains (List[str]): _description_
-            absence_strains (List[str]): _description_
+            module_genes (List[str]): A list of genes in a co-expression module
+            presence_strains (List[str]): Bacterial strains/diets where the MPG is present
+            absence_strains (List[str]): Bacterial strains/diets where the MPG is absent
 
         Returns:
-            Tuple[float, float]: _description_
+            Tuple[float, float]: The Bonferroni and FDR score of the module
         """
         gene_pvals = []
 
