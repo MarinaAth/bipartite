@@ -3,149 +3,244 @@ from scipy import stats
 import statsmodels.stats.multitest as multitest
 import save_mods_to_dict
 import numpy as np
+from typing import Dict, List, Tuple, Optional
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 
-modDir = ('final_network/topMods')
-modules_all = save_mods_to_dict.assign_to_dict(modDir)
-process_mods = {f'mod{i}' for i in range(50, 61)}
-modules = {k: modules_all[k] for k in process_mods}
-print(modules.keys(), flush=True)
+class BipatiteAnalysis:
+    """Handles the construction of a bipartite network between
+    co-expression modules (nematode) and present/absent bacterial pathways
+    """
 
-# Import the binary files
-path_binary_df = pd.read_csv('pathways_to_test',
-                             sep='\t', header=0)
-path_binary_df.set_index('Pathways', inplace=True)
-temp_path = path_binary_df.copy()
-path_binary_df.columns = [str(col) + '_R1' for col in path_binary_df.columns]
-temp_path.columns = [str(col) + '_R2' for col in temp_path.columns]
-merged_path = pd.concat([path_binary_df, temp_path], axis=1)
-merged_path.to_csv("grouped_pathways_reps.tsv", sep="\t")
+    def __init__(self, mod_dir:str, pathway_file:str, expression_file:str,
+                 module_range: Tuple[int, int] = (50,61)):
+        self.mod_dir = mod_dir
+        self.pathway_file = pathway_file
+        self.expression_file = expression_file
+        self.module_range = module_range
 
-path_binary_dict = merged_path.transpose().to_dict()
+        # Initialising input structures
+        self.modules = {}
+        self.path_binary_dict = {}
+        self.gene_expression = {}
 
-# Import the expression matrix
-gene_expression_df = pd.read_csv('normalized_counts_final_Sep2024.tsv',
-                                 sep='\t', header=0)
-gene_expression_df.set_index('Gene', inplace=True)
-gene_expression_dict = gene_expression_df.to_dict('index')
+        # Initialising result structures
+        self.interaction_results_fdr = {}
+        self.interaction_results_bonferroni = {}
 
-# Create a dictionary for the interactions that will be saved as s 2d matrix:
-# Keys (rows): Modules
-# Values (columns): Pathway groups
-interaction_dir_FDR = {}
-interaction_dir_Bonferroni = {}
 
-p_temp = []
-a_temp = []
-presence_expr = []
-absence_expr = []
-gene_lst = []
-tmp_FDR = {}
-tmp_Bonferroni = {}
-mod_path_interact_FDR = 0
-mod_path_interact_Bonferroni = 0
-gene_pvals = []
-sig_genes = []
-for k, v in path_binary_dict.items():
-    presence = []
-    absence = []
-    for k1, v1 in v.items():
-        if v[k1] == 1:
-            presence.append(k1)
-        else:
-            absence.append(k1)
-    if not presence:
-        print(f"Group of pathways {k} is absent in all strains", flush=True)
-        continue
-    elif not absence:
-        print(f"Group of pathways {k} is present in all strains", flush=True)
-        continue
-    else:
-        print(f"Processing group of pathways {k}", flush=True)
-        # Opening the top module files one by one
-        for k_mod, v_mod in modules.items():
-            gene_lst = modules[k_mod]
-            # Calculate the number of genes in the module:
-            n = len(gene_lst)
-            # Init the statistically significant genes:
-            # N1 for FDR and Bonferroni
-            n1_FDR = 0
-            n1_Bonferroni = 0
-            # For each gene in the list
-            print(f"Evaluating  {k_mod} against {k}", flush=True)
-            gene_pvals.clear()
-            sig_genes.clear()
-            p_temp.clear()
-            a_temp.clear()
-            presence_expr.clear()
-            absence_expr.clear()
-            for gene in gene_lst:
-                # Match gene + strains + pattern to gene expression
-                if gene in gene_expression_dict.keys():
-                    gene_key = gene_expression_dict[gene]
-                    gene_expr_values = []
-                    for sublist in gene_key.values():
-                        if isinstance(sublist, list):
-                            # If it's a list, extend
-                            gene_expr_values.extend(sublist)
-                        else:
-                            gene_expr_values.append(sublist)
-                    median_gene = np.median(gene_expr_values)
-                    for k_expr, v_expr in gene_key.items():
-                        if k_expr in presence:
-                            presence_expr.append(gene_key[k_expr])
-                        elif k_expr in absence:
-                            absence_expr.append(gene_key[k_expr])
-                        else:
-                            continue
-                    # Calculate p-value and add to list
-                    fc_present = [element / median_gene for element in presence_expr]
-                    fc_absent = [element / median_gene for element in absence_expr]
-                    fc_present_median = np.median(fc_present)
-                    fc_absent_median = np.median(fc_absent)
-                    if (fc_present_median > (fc_absent_median * 2) and
-                            presence_expr and absence_expr):
-                        statistic, p_value = stats.mannwhitneyu(presence_expr,
-                                                                absence_expr)
-                        gene_pvals.append(p_value)
-                    else:
-                        tmp_FDR[k_mod] = 0.0
-                        tmp_Bonferroni[k_mod] = 0.0
-                else:
-                    print(f"Gene {gene} has low expression/excluded.",
-                          flush=True)
-                    continue
-            # Sort list of p-values
-            gene_pvals.sort()
-            # Perform FDR and Bonferroni correction
-            if gene_pvals:
-                gene_pvals.sort()
-                bonferroni_test = np.array(gene_pvals) * len(gene_pvals)
-                reject, fdr_test, _, _ = multitest.multipletests(gene_pvals,
-                                                           alpha=0.05,
-                                                           method='fdr_bh')
-                # Filter genes with corrected values less than 0.05
-                sig_FDR = [x for x in fdr_test if x < 0.05]
-                sig_Bonferroni = [y for y in bonferroni_test if y < 0.05]
-                # Calculate interacting genes in both correction methods
-                n1_FDR = len(sig_FDR)
-                n1_Bonferroni = len(sig_Bonferroni)
-                # Calculate interaction values
-                mod_path_interact_FDR = (n1_FDR / n)
-                mod_path_interact_Bonferroni = (n1_Bonferroni / n)
-                # Update the temporary dictionaries
-                tmp_FDR[k_mod] = float(mod_path_interact_FDR)
-                tmp_Bonferroni[k_mod] = float(mod_path_interact_Bonferroni)
-            else:
+    def load_modules(self) -> None:
+        """Importing and processing bacterial pathway
+        data (binary for presence/absence)
+        """
+        logger.info(f"Loading pathways from {self.pathway_file}")
+        path_binary_df = pd.read_csv(self.pathway_file, sep='\t', header=0)
+        path_binary_df.set_index('Pathways', inplace=True)
+
+        # Duplicate columns for each of 2 replicates
+        temp_path = path_binary_df.copy()
+        path_binary_df.columns = [str(col) + '_R1' for col in path_binary_df.columns]
+        temp_path.columns = [str(col) + '_R2' for col in temp_path.columns]
+
+        # Merge and save
+        merged_path = pd.concat([path_binary_df, temp_path], axis=1)
+        output_file = "grouped_pathways_reps.tsv"
+        merged_path.to_csv(output_file, sep="\t")
+        logger.info(f"Created and merged binary pathway file for replicates")
+        self.path_binary_dict = merged_path.transpose().to_dict()
+
+
+    def load_gene_expression(self) -> None:
+        """Importing and processing the gene expression data
+        from the nematode's transcriptomic profiles
+        """
+        logger.info(f"Loading gene expression table")
+        gene_expression_df = pd.read_csv(self.expression_file, sep='\t', header=0)
+        gene_expression_df.set_index('Gene', inplace=True)
+        self.gene_expression_dict = gene_expression_df.to_dict('index')
+        logger.info(f"Loaded gene expression data for {len(self.gene_expression_dict)} genes")
+
+
+    def get_presence_absence_strains(self, pathway_data: Dict) -> Tuple[List[str], List[str]]:
+        """Separate strains based on the presence/absence patterns in the pathway data
+
+        Args:
+            pathway_data (Dict): 
+
+        Returns:
+            Tuple[List[str], List[str]]: _description_
+        """
+        presence = [strain for strain, value in pathway_data.items() if value == 1]
+        absence = [strain for strain, value in pathway_data.items() if value == 0]
+        return presence, absence
+    
+
+    def calculate_fold_change_pval(self, gene:str, presence_strains: List[str],
+                                   absence_strains: List[str]) -> Optional[float]:
+        """Calculate fold change and pvalue of FC for each gene of each module
+        for strains with present vs. absent pathways
+
+        Args:
+            gene (str): _description_
+            presence_strains (List[str]): _description_
+            absence_strains (List[str]): _description_
+
+        Returns:
+            Optional[float]: _description_
+        """
+        if gene not in self.gene_expression_dict:
+            return None
+        
+        gene_data = self.gene_expression_dict[gene]
+
+        # Extract expression values of gene and ensure there are expression values 
+        # for both presence and absence (for FC and pval)
+        presence_expr = [gene_data[strain] for strain in presence_strains if strain in gene_data]
+        absence_expr = [gene_data[strain] for strain in absence_strains if strain in gene_data]
+
+        if not presence_expr or not absence_expr:
+            return None
+        
+        # Median expression across all diets
+        all_expr_values = list(gene_data.values())
+        median_gene = np.median(all_expr_values)
+
+        # FC calculation
+        fc_present = [expr / median_gene for element in presence_expr]
+        fc_absent = [expr / median_gene for element in absence_expr]
+
+        fc_present_median = np.median(fc_present)
+        fc_absent_median = np.median(fc_absent)
+
+        # Test only for FC threshold
+        if fc_present_median > (fc_absent_median * 2):
+            try:
+                statistic, p_value = stats.mannwhitneyu(presence_expr, absence_expr)
+                return p_value
+            except ValueError as e:
+                logger.warning(f"Mann-Whitney U test failed for gene {gene}: {e}")
+                return None
+            
+
+    def analyze_module_pathway_interaction(self, module_genes: List[str],
+                                           presence_strains: List[str],
+                                           absence_strains: List[str]) -> Tuple[float, float]:
+        """Interaction between a gene co-expression module and a bacterial pathway group
+
+        Args:
+            module_genes (List[str]): _description_
+            presence_strains (List[str]): _description_
+            absence_strains (List[str]): _description_
+
+        Returns:
+            Tuple[float, float]: _description_
+        """
+        gene_pvals = []
+
+        for gene in module_genes:
+            p_value = self.calculate_fold_change_pval(gene, presence_strains, absence_strains)
+            if p_value is not None:
+                gene_pvals.append(p_value)
+
+        if not gene_pvals:
+            return 0.0, 0.0
+        
+        # Multiple testing correction
+        gene_pvals.sort()
+        n_genes = len(module_genes)
+
+        # Bonferroni
+        bonferroni_corrected = np.array(gene_pvals) * len(gene_pvals)
+        sig_Bonferroni = np.sum(bonferroni_corrected < 0.05)
+
+        # FDR
+        reject, fdr_corrected, _, _ = multitest.multipletests(gene_pvals, alpha=0.05, method='fdr_bh')
+        sig_fdr = np.sum(fdr_corrected < 0.05)
+
+        # Calculate interaction scores
+        fdr_score = sig_fdr / n_genes
+        bonferroni_score = sig_Bonferroni / n_genes
+
+        return fdr_score, bonferroni_score
+    
+
+    def run_analysis(self) -> None:
+        """Run bipartite
+        """
+        logger.info("Starting bipartite")
+
+        self.load_modules()
+        self.load_pathways()
+        self.load_gene_expression()
+
+        # Process each bacterial MPG
+        for pathway_name, pathway_data in self.path_binary_dict.items():
+            presence_strains, absence_strains = self.get_presence_absence_strains(pathway_data)
+
+            if not presence_strains:
+                logger.info(f"MPG {pathway_name} is absent in all strains")
                 continue
-    # Add to respective dictionaries
-    interaction_dir_FDR[k] = tmp_FDR
-    interaction_dir_Bonferroni[k] = tmp_Bonferroni
+            elif not absence_strains:
+                logger.info(f"MPG {pathway_name} is present in all strains")
+                continue
+            
+            logger.info(f"Processing MPG: {pathway_name}")
 
-# Write interaction with FDR to file
-bipartite_df_FDR = pd.DataFrame.from_dict(interaction_dir_FDR)
-bipartite_df_FDR.to_csv("bipartite_mod50_60_FDR_Sep2024.tsv", sep="\t")
+            # Initialise results for MPG
+            pathway_results_fdr = {}
+            pathway_results_bonferroni = {}
 
-# Write interaction with Bonferroni to file
-bipartite_df_Bonferroni = pd.DataFrame.from_dict(interaction_dir_Bonferroni)
-bipartite_df_Bonferroni.to_csv("bipartite_mod50_60_Bonferroni_Sep2024.tsv", sep="\t")
+            # Process each module
+            for module_name, module_genes in self.modules.items():
+                logger.info(f"Evaluating {module_name} against {pathway_name}")
+
+                fdr_score, bonferroni_score = self.analyze_module_pathway_interaction(module_genes,
+                                                                                      presence_strains,
+                                                                                      absence_strains)
+                pathway_results_fdr[module_name] = fdr_score
+                pathway_results_bonferroni[module_name] = bonferroni_score
+
+            self.interaction_results_fdr[pathway_name] = pathway_results_fdr
+            self.interaction_results_bonferroni[pathway_name] = pathway_results_bonferroni
+
+
+    def save_results(self, output_prefix:str = 'bipartite_mod50_60') -> None:
+        fdr_df = pd.DataFrame.from_dict(self.interaction_results_fdr)
+        fdr_output = f"{output_prefix}_FDR.tsv"
+        fdr_df.to_csv(fdr_output, sep="\t")
+        logger.info(f"FDR results saved to {fdr_output}")
+
+        bonferroni_df = pd.DataFrame.from_dict(self.interaction_results_bonferroni)
+        bonferroni_output = f"{output_prefix}_Bonferroni.tsv"
+        bonferroni_df.to_csv(bonferroni_output, sep="\t")
+        logger.info(f"Bonferroni results saved to {bonferroni_output}")
+
+
+def main():
+    config = {
+        'mod_dir': 'final_network/topMods',
+        'pathway_file': 'binary_pathways',
+        'expression_file': 'normalized_counts.tsv',
+        'module_range': (50, 61),
+        'output_prefix': 'bipartite_mod_50_61',
+    }
+
+    analyzer = BipatiteAnalysis(
+        mod_dir=config['mod_dir'],
+        pathway_file=config['pathway_file'],
+        expression_file=config['expression_file'],
+        module_range=config['module_range']
+    )
+
+    analyzer.run_analysis()
+    analyzer.save_results(config['output_prefix'])
+
+    logger.info("Completed..")
+
+
+if __name__ == "__main__":
+    main()
+
