@@ -14,11 +14,10 @@ def assign_to_dict(directory):
     # Use glob to find all output_file.* files in the specified directory
     for file_path in glob.glob(os.path.join(directory, "output_file.*")):
         # Extract the module number from the filename
-        # and get the part after the last dot
         mod_number = os.path.basename(file_path).split('.')[-1]
         module_key = f'mod{mod_number}'
 
-        # Read the file and store its contents in the dictionary
+        # Store the contents of each module in the dictionary
         modules_dict[module_key] = module_files(file_path)
 
     return modules_dict
